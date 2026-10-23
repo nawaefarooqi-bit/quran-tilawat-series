@@ -1,0 +1,36 @@
+# تلاوت کی ویڈیو بنانا (دستی) — نتیجہ GitHub Release میں (پبلک ریپوزیٹری: منٹ لامحدود)
+name: Build tilawat video
+on:
+  workflow_dispatch:
+    inputs:
+      kind: { description: "juz یا surah", required: true, default: "juz" }
+      number: { description: "پارہ یا سورت نمبر", required: true, default: "1" }
+      reciter: { description: "everyayah قاری فولڈر", required: false, default: "Hudhaify_128kbps" }
+permissions:
+  contents: write
+concurrency: tilawat
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install requests playwright
+          python -m playwright install --with-deps chromium
+      - name: Build
+        env:
+          RECITER: ${{ github.event.inputs.reciter }}
+        run: python -u -m tilawat.build ${{ github.event.inputs.kind }} ${{ github.event.inputs.number }} 2>&1 | tee build.log
+      - name: Publish to release
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.inputs.kind }}-${{ github.event.inputs.number }}-${{ github.event.inputs.reciter }}"
+          gh release delete "$TAG" -y --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" out/* build.log --title "نمونہ: $TAG" --notes "نمونہ — ابھی یوٹیوب پر نہیں" --prerelease
