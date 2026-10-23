@@ -137,7 +137,7 @@ body{background:radial-gradient(1400px 800px at 50% 40%,#1b5a44 0%,#0f3b2c 55%,#
  text-shadow:0 2px 10px rgba(0,0,0,.35);word-spacing:4px}
 .sign{font-size:.45em;vertical-align:1em;color:#e8c97a;margin:0 2px}
 .num{display:inline-flex;align-items:center;justify-content:center;font-family:NQ,serif;font-size:.42em;line-height:1;
- width:1.9em;height:1.9em;border-radius:50%;border:3px solid #d6b15e;color:#f3dc9a;margin-right:18px;vertical-align:.35em;padding-top:.25em}
+ min-width:1.9em;height:1.9em;padding-left:.35em;padding-right:.35em;border-radius:999px;border:3px solid #d6b15e;color:#f3dc9a;margin-right:18px;vertical-align:.35em;padding-top:.25em}
 .bism p{font-size:92px;color:#f6e3a6}
 .foot{position:absolute;bottom:58px;left:90px;right:90px;display:flex;justify-content:space-between;align-items:center;direction:rtl}
 .rec{font-family:NQ,serif;font-size:30px;line-height:1.9;color:#d9c79a}
