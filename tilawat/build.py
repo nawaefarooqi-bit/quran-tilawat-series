@@ -79,6 +79,41 @@ def surah_text(s: int) -> dict[int, str]:
     return {int(v["verse"]): v["text"] for v in d["chapter"]}
 
 
+META_URL = "https://api.alquran.cloud/v1/meta"
+
+
+def meta() -> dict:
+    """سورت کی معلومات: مکی/مدنی، آیات، رکوع (مستند میٹا ڈیٹا؛ نہ ملے تو صرف آیات کی تعداد)"""
+    p = CACHE / "meta.json"
+    if not p.exists():
+        try:
+            r = requests.get(META_URL, timeout=60)
+            r.raise_for_status()
+            d = r.json()["data"]
+            rk: dict[int, int] = {}
+            for ref in d["rukus"]["references"]:
+                rk[ref["surah"]] = rk.get(ref["surah"], 0) + 1
+            out = {str(x["number"]): {"type": x["revelationType"], "ayahs": x["numberOfAyahs"], "rukus": rk.get(x["number"])}
+                   for x in d["surahs"]["references"]}
+            CACHE.mkdir(exist_ok=True)
+            p.write_text(json.dumps(out), encoding="utf-8")
+        except Exception as e:
+            log(f"میٹا ڈیٹا نہیں ملا ({e}) — صرف آیات کی تعداد")
+            return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def banner_html(s: int) -> str:
+    """مصحف کی طرح سورت کا جھنڈا: آیاتہا · سورۃ … مکیۃ/مدنیۃ · رکوعاتہا"""
+    m = meta().get(str(s), {})
+    ayahs = m.get("ayahs") or len(surah_text(s))
+    kind = {"Meccan": "مَكِّيَّةٌ", "Medinan": "مَدَنِيَّةٌ"}.get(m.get("type"), "")
+    side = lambda label, n: f'<div class="cart small"><span>{label}</span> <b>{str(n).translate(AR_DIGITS)}</b></div>' if n else ""
+    return (f'<div class="banner">{side("اٰيَاتُهَا", ayahs)}'
+            f'<div class="cart main"><span>سُوْرَةُ {SURAH_AR[s - 1]}</span> <i>{kind}</i></div>'
+            f'{side("رُكُوْعَاتُهَا", m.get("rukus"))}</div>')
+
+
 def ayah_list(kind: str, n: int) -> list[tuple[int, int]]:
     if kind == "surah":
         return [(n, a) for a in sorted(surah_text(n))]
@@ -139,6 +174,15 @@ body{background:radial-gradient(1400px 800px at 50% 40%,#1b5a44 0%,#0f3b2c 55%,#
 .num{display:inline-flex;align-items:center;justify-content:center;font-family:NQ,serif;font-size:.42em;line-height:1;
  min-width:1.9em;height:1.9em;padding-left:.35em;padding-right:.35em;border-radius:999px;border:3px solid #d6b15e;color:#f3dc9a;margin-right:18px;vertical-align:.35em;padding-top:.25em}
 .bism p{font-size:92px;color:#f6e3a6}
+.banner{position:absolute;top:168px;left:150px;right:150px;display:flex;direction:rtl;gap:22px;align-items:center;justify-content:center}
+.cart{font-family:IP,serif;color:#123c2e;background:linear-gradient(180deg,#fdf7e3,#efdcaa);border:3px solid #b08d3c;
+ box-shadow:inset 0 0 0 5px #fdf7e3,inset 0 0 0 7px #c9a24e,0 6px 18px rgba(0,0,0,.35);border-radius:60px;
+ display:flex;align-items:center;justify-content:center;gap:16px;white-space:nowrap}
+.cart.main{min-width:760px;height:118px;padding:0 60px;font-size:58px}
+.cart.main i{font-style:normal;font-size:.62em;color:#5c4a1c}
+.cart.small{height:92px;padding:0 34px;font-size:38px}
+.cart.small b{font-family:NQ,serif;font-weight:400;color:#7a5d17;font-size:1.05em;padding-top:.2em}
+.withban{top:310px}
 .foot{position:absolute;bottom:58px;left:90px;right:90px;display:flex;justify-content:space-between;align-items:center;direction:rtl}
 .rec{font-family:NQ,serif;font-size:30px;line-height:1.9;color:#d9c79a}
 .brand{display:flex;align-items:center;gap:16px;font-family:NQ,serif;font-size:34px;color:#f3dc9a;direction:rtl}
@@ -146,7 +190,7 @@ body{background:radial-gradient(1400px 800px at 50% 40%,#1b5a44 0%,#0f3b2c 55%,#
 .bar{position:absolute;bottom:30px;left:28px;height:5px;background:linear-gradient(90deg,#b08d3c,#f0d58a);border-radius:3px}
 </style></head><body><div class="pat"></div><div class="frame"></div>
 <div class="top"><div class="chip">سورۃ <b>__SURAH__</b></div><div class="chip">پارہ __JUZN__ — <b>__JUZ__</b></div></div>
-<div class="ayah __CLS__"><p id="t">__TEXT__</p></div>
+__BANNER__<div class="ayah __CLS__"><p id="t">__TEXT__</p></div>
 <div class="foot"><div class="brand"><img src="__LOGO__"><span>نوائے فاروقی</span></div><div class="rec">__REC__</div></div>
 <div class="bar" style="width:__BAR__px"></div>
 <script>
@@ -204,10 +248,13 @@ def build(kind: str, n: int, reciter: str) -> Path:
             base = {"__SURAH__": SURAH_AR[s - 1], "__JUZN__": str(j).translate(URDU_DIGITS), "__JUZ__": JUZ_NAME[j - 1],
                     "__REC__": "تلاوت: " + rec_name}
             if a == 1 and s not in (1, 9):           # ہر سورت سے پہلے بسم اللہ (الفاتحہ میں یہ پہلی آیت ہے، التوبہ میں نہیں)
-                seq.append(({**base, "__TEXT__": indopak_html(surah_text(1)[1]), "__CLS__": "bism", "__FS__": "92"},
+                seq.append(({**base, "__TEXT__": indopak_html(surah_text(1)[1]), "__CLS__": "bism withban", "__FS__": "92",
+                             "__BANNER__": banner_html(s)},
                             audio(reciter, 1, 1, tmp / f"b{s}.mp3")))
             txt = indopak_html(surah_text(s)[a]) + f' <span class="num">{str(a).translate(AR_DIGITS)}</span>'
-            seq.append(({**base, "__TEXT__": txt, "__CLS__": "", "__FS__": "96"}, audio(reciter, s, a, tmp / f"{s}_{a}.mp3")))
+            first = a == 1 and s in (1, 9)
+            seq.append(({**base, "__TEXT__": txt, "__CLS__": "withban" if first else "", "__FS__": "96",
+                         "__BANNER__": banner_html(s) if first else ""}, audio(reciter, s, a, tmp / f"{s}_{a}.mp3")))
         durs = [dur(m) + 0.35 for _, m in seq]
         total = sum(durs)
         acc, items = 0.0, []
@@ -230,7 +277,7 @@ def build(kind: str, n: int, reciter: str) -> Path:
         shutil.copy(cards[min(1, len(cards) - 1)], OUT / (out.stem + "-card.jpg"))
         chapters, t = [], 0.0
         for (subs, _), d in zip(seq, durs):
-            if subs["__CLS__"] == "bism" or not chapters:
+            if subs.get("__BANNER__") or not chapters:
                 chapters.append(f"{int(t // 3600):d}:{int(t % 3600 // 60):02d}:{int(t % 60):02d} سورۃ {subs['__SURAH__']}")
             t += d
         (OUT / (out.stem + "-chapters.txt")).write_text("\n".join(chapters), encoding="utf-8")
