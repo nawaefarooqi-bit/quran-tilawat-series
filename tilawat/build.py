@@ -268,6 +268,8 @@ def build(kind: str, n: int, reciter: str) -> Path:
     tr_ed = os.environ.get("TRANSLATION", "")
     if tr_ed:
         rec_name += " · ترجمہ: " + TRANSLATORS.get(tr_ed, tr_ed)
+    if os.environ.get("TR_VOICE"):
+        rec_name += " · آواز: " + os.environ["TR_VOICE"]
     tr = (lambda s, a: translation(tr_ed, s).get(a, "")) if tr_ed else (lambda s, a: "")
     body = "hastr" if tr_ed else ""
     OUT.mkdir(exist_ok=True)
@@ -275,6 +277,7 @@ def build(kind: str, n: int, reciter: str) -> Path:
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         seq = []          # (card subs, audio path)
+        keys = []         # (سورت، آیت) ہر کارڈ کی — بسم اللہ = (1, 1)
         for s, a in ayahs:
             j = juz_of(s, a)
             base = {"__SURAH__": SURAH_AR[s - 1], "__JUZN__": str(j).translate(URDU_DIGITS), "__JUZ__": JUZ_NAME[j - 1],
@@ -284,11 +287,27 @@ def build(kind: str, n: int, reciter: str) -> Path:
                              "__BANNER__": banner_html(s), "__TR__": tr(1, 1)},
                             audio(reciter, s, 0, tmp / f"b{s}.mp3") if os.environ.get("AUDIO_DIR")
                             else audio(reciter, 1, 1, tmp / f"b{s}.mp3")))
+                keys.append((1, 1))
             txt = indopak_html(surah_text(s)[a]) + f' <span class="num">{str(a).translate(AR_DIGITS)}</span>'
             first = a == 1 and s in (1, 9)
             seq.append(({**base, "__TEXT__": txt, "__CLS__": "withban" if first else "", "__FS__": "96",
                          "__BANNER__": banner_html(s) if first else "", "__TR__": tr(s, a)},
                         audio(reciter, s, a, tmp / f"{s}_{a}.mp3")))
+            keys.append((s, a))
+        trdir = os.environ.get("TR_AUDIO_DIR")      # ترجمے کی آواز: SSSAAA.* (بسم اللہ = 001001) — ہر آیت کی تلاوت کے بعد
+        if trdir:
+            joined = []
+            for i, ((subs, mp3), (s, a)) in enumerate(zip(seq, keys)):
+                hit = sorted(Path(trdir).glob(f"{s:03d}{a:03d}.*"))
+                if not hit:
+                    raise RuntimeError(f"ترجمے کی آواز نہیں: {s}:{a}")
+                j = tmp / f"j{i:04d}.wav"
+                ff("-i", str(mp3), "-i", str(hit[0]), "-filter_complex",
+                   "[0]aresample=44100,aformat=channel_layouts=stereo,apad=pad_dur=0.6[a];"
+                   "[1]aresample=44100,aformat=channel_layouts=stereo,loudnorm=I=-18:TP=-1.5[b];[a][b]concat=n=2:v=0:a=1",
+                   "-c:a", "pcm_s16le", str(j))
+                joined.append((subs, j))
+            seq = joined
         durs = [dur(m) + 0.35 for _, m in seq]
         total = sum(durs)
         acc, items = 0.0, []
