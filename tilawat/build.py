@@ -135,7 +135,30 @@ def juz_of(s: int, a: int) -> int:
     return j
 
 
+TR_URL = "https://raw.githubusercontent.com/fawazahmed0/quran-api/1/editions/{ed}/{s}.json"
+TRANSLATORS = {"urd-fatehmuhammadja": "مولانا فتح محمد جالندھریؒ", "urd-muhammadjunagar": "مولانا محمد جوناگڑھیؒ"}
+
+
+def translation(ed: str, s: int) -> dict[int, str]:
+    """اردو ترجمہ (مستند ماخذ: fawazahmed0/quran-api ← tanzil) — آیت نمبر → متن"""
+    c = CACHE / "tr" / ed / f"{s}.json"
+    if not c.exists():
+        r = requests.get(TR_URL.format(ed=ed, s=s), timeout=60)
+        r.raise_for_status()
+        c.parent.mkdir(parents=True, exist_ok=True)
+        c.write_text(r.text, encoding="utf-8")
+    return {v["verse"]: v["text"].strip() for v in json.loads(c.read_text(encoding="utf-8"))["chapter"]}
+
+
 def audio(reciter: str, s: int, a: int, dest: Path) -> Path:
+    """AUDIO_DIR ہو تو اپنی ریکارڈنگ (SSSAAA.*؛ بسم اللہ = SSS000)، ورنہ everyayah"""
+    own = os.environ.get("AUDIO_DIR")
+    if own:
+        hit = sorted(Path(own).glob(f"{s:03d}{a:03d}.*"))
+        if not hit:
+            raise RuntimeError(f"اپنی ریکارڈنگ میں یہ آیت نہیں: {s}:{a} ({own})")
+        shutil.copy(hit[0], dest.with_suffix(hit[0].suffix))
+        return dest.with_suffix(hit[0].suffix)
     c = CACHE / "audio" / reciter / f"{s:03d}{a:03d}.mp3"
     if not c.exists():
         for attempt in range(4):
@@ -183,14 +206,18 @@ body{background:radial-gradient(1400px 800px at 50% 40%,#1b5a44 0%,#0f3b2c 55%,#
 .cart.small{height:92px;padding:0 34px;font-size:38px}
 .cart.small b{font-family:NQ,serif;font-weight:400;color:#7a5d17;font-size:1.05em;padding-top:.2em}
 .withban{top:310px}
+.tr{position:absolute;bottom:165px;left:170px;right:170px;font-family:NQ,serif;font-size:50px;line-height:1.95;direction:rtl;text-align:center;color:#f3dc9a;
+ border-top:1px solid rgba(214,177,94,.4);padding-top:14px}
+.tr:empty{display:none}
+body.hastr .ayah{bottom:330px}
 .foot{position:absolute;bottom:58px;left:90px;right:90px;display:flex;justify-content:space-between;align-items:center;direction:rtl}
 .rec{font-family:NQ,serif;font-size:30px;line-height:1.9;color:#d9c79a}
 .brand{display:flex;align-items:center;gap:16px;font-family:NQ,serif;font-size:34px;color:#f3dc9a;direction:rtl}
 .brand img{width:92px;height:92px;border-radius:50%;box-shadow:0 0 0 3px rgba(214,177,94,.6)}
 .bar{position:absolute;bottom:30px;left:28px;height:5px;background:linear-gradient(90deg,#b08d3c,#f0d58a);border-radius:3px}
-</style></head><body><div class="pat"></div><div class="frame"></div>
+</style></head><body class="__BODY__"><div class="pat"></div><div class="frame"></div>
 <div class="top"><div class="chip">سورۃ <b>__SURAH__</b></div><div class="chip">پارہ __JUZN__ — <b>__JUZ__</b></div></div>
-__BANNER__<div class="ayah __CLS__"><p id="t">__TEXT__</p></div>
+__BANNER__<div class="ayah __CLS__"><p id="t">__TEXT__</p></div><div class="tr">__TR__</div>
 <div class="foot"><div class="brand"><img src="__LOGO__"><span>نوائے فاروقی</span></div><div class="rec">__REC__</div></div>
 <div class="bar" style="width:__BAR__px"></div>
 <script>
@@ -237,7 +264,12 @@ def dur(p: Path) -> float:
 def build(kind: str, n: int, reciter: str) -> Path:
     ayahs = ayah_list(kind, n)
     log(f"{kind} {n}: {len(ayahs)} آیات، قاری {reciter}")
-    rec_name = RECITERS.get(reciter, reciter)
+    rec_name = os.environ.get("RECITER_NAME") or RECITERS.get(reciter, reciter)
+    tr_ed = os.environ.get("TRANSLATION", "")
+    if tr_ed:
+        rec_name += " · ترجمہ: " + TRANSLATORS.get(tr_ed, tr_ed)
+    tr = (lambda s, a: translation(tr_ed, s).get(a, "")) if tr_ed else (lambda s, a: "")
+    body = "hastr" if tr_ed else ""
     OUT.mkdir(exist_ok=True)
     out = OUT / (f"para-{n:02d}.mp4" if kind == "juz" else f"surah-{n:03d}.mp4")
     with tempfile.TemporaryDirectory() as tmp:
@@ -246,15 +278,17 @@ def build(kind: str, n: int, reciter: str) -> Path:
         for s, a in ayahs:
             j = juz_of(s, a)
             base = {"__SURAH__": SURAH_AR[s - 1], "__JUZN__": str(j).translate(URDU_DIGITS), "__JUZ__": JUZ_NAME[j - 1],
-                    "__REC__": "تلاوت: " + rec_name}
+                    "__REC__": "تلاوت: " + rec_name, "__BODY__": body}
             if a == 1 and s not in (1, 9):           # ہر سورت سے پہلے بسم اللہ (الفاتحہ میں یہ پہلی آیت ہے، التوبہ میں نہیں)
                 seq.append(({**base, "__TEXT__": indopak_html(surah_text(1)[1]), "__CLS__": "bism withban", "__FS__": "92",
-                             "__BANNER__": banner_html(s)},
-                            audio(reciter, 1, 1, tmp / f"b{s}.mp3")))
+                             "__BANNER__": banner_html(s), "__TR__": tr(1, 1)},
+                            audio(reciter, s, 0, tmp / f"b{s}.mp3") if os.environ.get("AUDIO_DIR")
+                            else audio(reciter, 1, 1, tmp / f"b{s}.mp3")))
             txt = indopak_html(surah_text(s)[a]) + f' <span class="num">{str(a).translate(AR_DIGITS)}</span>'
             first = a == 1 and s in (1, 9)
             seq.append(({**base, "__TEXT__": txt, "__CLS__": "withban" if first else "", "__FS__": "96",
-                         "__BANNER__": banner_html(s) if first else ""}, audio(reciter, s, a, tmp / f"{s}_{a}.mp3")))
+                         "__BANNER__": banner_html(s) if first else "", "__TR__": tr(s, a)},
+                        audio(reciter, s, a, tmp / f"{s}_{a}.mp3")))
         durs = [dur(m) + 0.35 for _, m in seq]
         total = sum(durs)
         acc, items = 0.0, []
